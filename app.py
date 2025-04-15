@@ -12,7 +12,7 @@ def predict_image(img):
     img_array = np.array(img) / 255.0  # Normalisasi
     img_array = np.expand_dims(img_array, axis=0)  # (1, 150, 150, 3)
     prediction = model.predict(img_array)[0][0]
-    label = "♻️ Metal" if prediction > 0.5 else "🗑️ Non-Metal"
+    label = "Non Metal" if prediction > 0.5 else "Metal"
     confidence = prediction if prediction > 0.5 else 1 - prediction
     return label, confidence
 
