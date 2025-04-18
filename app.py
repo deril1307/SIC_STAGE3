@@ -3,18 +3,22 @@ from tensorflow.keras.models import load_model
 from PIL import Image
 import numpy as np
 import datetime
-import os
+import requests
+import matplotlib.pyplot as plt
+from io import BytesIO
+import time
 
-# Load model
-model = load_model("model_sampah_metal_vs_non_metal_optimal.h5")
+# Memuat model
+model = load_model("model_sampah_metal_vs_non_metal_final.h5")
 
-# Inisialisasi session_state untuk menyimpan riwayat
+# Inisialisasi session_state
 if "history" not in st.session_state:
     st.session_state.history = []
 
 # Fungsi prediksi
 def predict_image(img, threshold=0.5):
-    img = img.resize((150, 150))
+    img = img.convert("RGB")
+    img = img.resize((224, 224))
     img_array = np.array(img) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
     prediction = model.predict(img_array)[0][0]
@@ -22,93 +26,97 @@ def predict_image(img, threshold=0.5):
     confidence = prediction if prediction > threshold else 1 - prediction
     return label, confidence, prediction
 
-# Judul halaman
-st.set_page_config(page_title="Klasifikasi Sampah")
-st.title("Klasifikasi Sampah - Metal vs Non-Metal")
-st.markdown("Upload gambar sampah untuk diprediksi apakah itu logam atau non-logam.")
-
-# Threshold slider
-threshold = st.slider("Atur Threshold Confidence", 0.0, 1.0, 0.5, 0.01)
-
-# ------------------------------
-# 🔹 Bagian 1: Upload Manual
-# ------------------------------
-st.markdown("### Upload Gambar Manual")
-uploaded_file = st.file_uploader("Unggah gambar dari komputer", type=["jpg", "png", "jpeg"])
-
-if uploaded_file:
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Gambar yang Diunggah", use_column_width=True)
-    
-    label, confidence, raw_pred = predict_image(image, threshold)
-
-    st.success(f"Prediksi: {label}")
-    st.write(f"Confidence: {confidence*100:.2f}%")
-
-    if label == "Metal":
-        st.info("Kategori Metal: contoh seperti kaleng, besi, aluminium, dan lainnya.")
-    else:
-        st.info("Kategori Non Metal: contoh seperti plastik, kertas, kain, dan lainnya.")
-
-    st.session_state.history.append({
-        "filename": uploaded_file.name,
+# Kirim prediksi ke ESP32
+def send_prediction_to_esp32(label, confidence):
+    url = "http://localhost:5000/prediksi"
+    payload = {
         "label": label,
-        "confidence": f"{confidence*100:.2f}%",
-        "timestamp": datetime.datetime.now().strftime("%H:%M:%S")
-    })
-
-# ------------------------------
-# 🔹 Bagian 2: Gambar Otomatis dari ESP32-CAM
-# ------------------------------
-st.markdown("### Gambar dari ESP32-CAM (Otomatis)")
-
-# Ambil file gambar yang dimulai dengan "upload_" dan berekstensi .jpg
-esp32_images = [f for f in os.listdir(".") if f.startswith("upload_") and f.endswith(".jpg")]
-esp32_images = sorted(esp32_images, reverse=True)
-
-if esp32_images:
-    latest_image_path = esp32_images[0]
-    latest_image = Image.open(latest_image_path)
-    st.image(latest_image, caption=f"Gambar ESP32: {latest_image_path}", use_column_width=True)
-
-    if st.button("Prediksi Gambar ESP32 Terbaru"):
-        label, confidence, raw_pred = predict_image(latest_image, threshold)
-
-        st.success(f"Prediksi: {label}")
-        st.write(f"Confidence: {confidence*100:.2f}%")
-
-        if label == "Metal":
-            st.info("Kategori Metal: contoh seperti kaleng, besi, aluminium, dan lainnya.")
+        "confidence": f"{confidence*100:.2f}%"
+    }
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            st.success("Prediksi berhasil dikirim ke ESP32!")
         else:
-            st.info("Kategori Non Metal: contoh seperti plastik, kertas, kain, dan lainnya.")
+            st.warning("Gagal mengirim prediksi ke ESP32.")
+    except Exception as e:
+        st.error(f"Error: {e}")
 
-        st.session_state.history.append({
-            "filename": latest_image_path,
-            "label": label,
-            "confidence": f"{confidence*100:.2f}%",
-            "timestamp": datetime.datetime.now().strftime("%H:%M:%S")
-        })
-else:
-    st.warning("Belum ada gambar dari ESP32-CAM.")
-
-# ------------------------------
-# 🔹 Bagian 3: Riwayat Prediksi
-# ------------------------------
-if st.session_state.history:
-    with st.expander("Riwayat Prediksi"):
-        for i, item in enumerate(reversed(st.session_state.history), start=1):
-            st.write(f"{i}. {item['filename']} - {item['label']} ({item['confidence']}) pada {item['timestamp']}")
-
-# ------------------------------
-# 🔹 Bagian 4: Tentang Aplikasi
-# ------------------------------
-with st.expander("Tentang Aplikasi"):
-    st.markdown("""
-    - Model: CNN dengan transfer learning
-    - Dikembangkan untuk mengklasifikasikan sampah Metal vs Non-Metal
-    - Dibuat oleh Kelompok Tim Semangat Lomba
-    - Framework: TensorFlow dan Streamlit
-    """)
-
+# Pengaturan halaman
+st.set_page_config(page_title="Klasifikasi Sampah", page_icon="♻️", layout="centered")
+st.markdown("<h1 style='text-align: center; color: green;'>♻️ Klasifikasi Sampah</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center;'>Deteksi apakah sampah merupakan <b>Metal</b> atau <b>Non Metal</b>.</p>", unsafe_allow_html=True)
 st.markdown("---")
-st.caption("© 2025 | Dibuat oleh Kelompok Tim Semangat Lomba")
+
+# Menampilkan gambar dari ESP32
+st.subheader("Gambar dari ESP32-CAM")
+url = "https://1e7c-114-10-145-57.ngrok-free.app/get_image"
+
+# Tempat untuk menampilkan gambar dari ESP32
+image_placeholder = st.empty()
+
+try:
+    # Request gambar dari ESP32 setiap 5 detik
+    while True:
+        response = requests.get(url)
+        if response.status_code == 200:
+            # Menangani gambar sebagai file gambar
+            img = Image.open(BytesIO(response.content))  # Menggunakan BytesIO untuk menangani konten gambar biner
+            image_placeholder.image(img, caption="📸 Gambar dari ESP32", use_container_width=True)
+
+            # Prediksi gambar
+            label, confidence, raw_pred = predict_image(img)
+            st.success(f"🎯 Prediksi: {label}")
+            st.write(f"📊 Confidence: **{confidence*100:.2f}%**")
+
+            if label == "Metal":
+                st.info("🔩 Kategori Metal: kaleng, besi, aluminium, dll.")
+            else:
+                st.info("🧴 Kategori Non Metal: plastik, kertas, kain, dll.")
+
+            # Menambahkan ke riwayat prediksi
+            st.session_state.history.append({
+                "filename": "Gambar ESP32",
+                "label": label,
+                "confidence": f"{confidence*100:.2f}%",
+                "timestamp": datetime.datetime.now().strftime("%H:%M:%S")
+            })
+
+            # Mengirim prediksi ke ESP32
+            send_prediction_to_esp32(label, confidence)
+
+        else:
+            st.warning("🚫 Gagal mengambil gambar dari ESP32.")
+        
+        time.sleep(5)  # Menunggu selama 5 detik sebelum melakukan request lagi
+
+except Exception as e:
+    st.error(f"❌ Error: {e}")
+
+# Menampilkan riwayat prediksi
+st.markdown("---")
+if st.session_state.history:
+    st.subheader("🕒 Riwayat Prediksi")
+    with st.expander("Lihat Riwayat"):
+        for i, item in enumerate(reversed(st.session_state.history), start=1):
+            st.write(f"**{i}.** `{item['filename']}` - {item['label']} ({item['confidence']}) 🕔 {item['timestamp']}")
+
+# Menampilkan grafik pie distribusi kategori sampah
+def show_summary_chart():
+    metal = sum(1 for item in st.session_state.history if item['label'] == "Metal")
+    non_metal = sum(1 for item in st.session_state.history if item['label'] == "Non Metal")
+
+    if metal + non_metal == 0:
+        return
+    labels = ['Metal', 'Non Metal']
+    sizes = [metal, non_metal]
+    colors = ['#FF9999', '#66B2FF']
+
+    fig, ax = plt.subplots()
+    ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90,
+           colors=colors, wedgeprops={'width': 0.4})
+    ax.axis('equal')
+    st.subheader("📊 Distribusi Kategori Sampah")
+    st.pyplot(fig)
+
+show_summary_chart()
