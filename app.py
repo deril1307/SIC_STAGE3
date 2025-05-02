@@ -68,7 +68,7 @@ with col2:
 
 # Stream loop
 if st.session_state.streaming:
-    url = "https://1e7c-114-10-145-57.ngrok-free.app/get_image"
+    url = "http://192.168.1.42:5000/get_image"
     try:
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
@@ -129,5 +129,59 @@ def show_summary_chart():
     ax.axis('equal')
     st.subheader("📊 Distribusi Kategori Sampah")
     st.pyplot(fig)
-
 show_summary_chart()
+
+# Grafik Bar: Jumlah klasifikasi per kategori
+def show_bar_chart():
+    metal = sum(1 for item in st.session_state.history if item['label'] == "Metal")
+    non_metal = sum(1 for item in st.session_state.history if item['label'] == "Non Metal")
+
+    if metal + non_metal == 0:
+        return
+
+    st.subheader("📊 Jumlah Prediksi per Kategori")
+    fig, ax = plt.subplots()
+    ax.bar(['Metal', 'Non Metal'], [metal, non_metal], color=['#FF9999', '#66B2FF'])
+    ax.set_ylabel("Jumlah")
+    st.pyplot(fig)
+
+show_bar_chart()
+
+# Grafik Line: Confidence dari waktu ke waktu
+def show_line_chart():
+    if not st.session_state.history:
+        return
+
+    timestamps = [item['timestamp'] for item in st.session_state.history]
+    confidences = [float(item['confidence'].replace('%', '')) for item in st.session_state.history]
+    labels = [item['label'] for item in st.session_state.history]
+
+    st.subheader("📈 Confidence dari Waktu ke Waktu")
+    fig, ax = plt.subplots()
+    ax.plot(timestamps, confidences, marker='o', color='green')
+    ax.set_xlabel("Waktu")
+    ax.set_ylabel("Confidence (%)")
+    ax.set_xticks(timestamps)
+    ax.set_xticklabels(timestamps, rotation=45, ha='right')
+    ax.grid(True)
+    st.pyplot(fig)
+
+show_line_chart()
+
+# Unduh CSV
+def download_history_as_csv():
+    if not st.session_state.history:
+        return
+
+    import pandas as pd
+    df = pd.DataFrame(st.session_state.history)
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="📥 Unduh Riwayat sebagai CSV",
+        data=csv,
+        file_name="riwayat_klasifikasi_sampah.csv",
+        mime="text/csv"
+    )
+
+    
+download_history_as_csv()
